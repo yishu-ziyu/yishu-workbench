@@ -2,7 +2,7 @@
   "name": "yishu-workbench",
   "version": "0.1.0",
   "private": true,
-  "description": "易书的工作台 · local-CLI agent workspace",
+  "description": "奕枢的工作台 · local-CLI agent workspace",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

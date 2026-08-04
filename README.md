@@ -1,8 +1,8 @@
-# 易书的工作台
+# 奕枢的工作台
 
 Web-first agent workspace shell（对齐 Moxt 产品面：对话 / 工作空间 / AI 同事 / 工作流看板 / 技能 / 自动化 / 集成 / 资源广场）。
 
-内部代号曾用 `yxt`；仓库与本地目录现统一为 **易书的工作台**。
+内部代号曾用 `yxt`；仓库与本地目录现统一为 **奕枢的工作台**。
 
 ## 产品差异（相对 Moxt）
 
@@ -13,7 +13,7 @@ Web-first agent workspace shell（对齐 Moxt 产品面：对话 / 工作空间 
 ## 本地运行
 
 ```bash
-cd "/Users/mahaoxuan/Desktop/奕枢/易书的工作台"
+cd "/Users/mahaoxuan/Desktop/奕枢/奕枢的工作台"
 pnpm install
 pnpm dev --port 3456
 ```
