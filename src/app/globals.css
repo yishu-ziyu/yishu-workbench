@@ -1,26 +1,121 @@
 @import "tailwindcss";
 
+/* streamdown utility detection (relative from src/app → node_modules) */
+@source "../../node_modules/streamdown/dist/*.js";
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --yxt-ink: #0e0f11;
+  --yxt-muted: #6b7280;
+  --yxt-border: #c8cdd1;
+  --yxt-border-soft: #e8ebed;
+  --yxt-bg: #ffffff;
+  --yxt-rail: #f7f8f9;
+  --yxt-mint: #6fd6b0;
+  --yxt-mint-deep: #3db88f;
+  --yxt-mint-soft: rgba(237, 250, 244, 0.85);
+  --yxt-peach: #fff4ee;
+  --yxt-peach-dot: #f0a070;
+  --yxt-stage-gray: #9aa3ad;
+  --yxt-selected: #eef0f2;
+  --yxt-tool: #8b919a;
+  --background: var(--yxt-bg);
+  --foreground: var(--yxt-ink);
+  /* minimal shadcn tokens for streamdown controls */
+  --card: #ffffff;
+  --card-foreground: #0e0f11;
+  --muted: #f7f8f9;
+  --muted-foreground: #6b7280;
+  --border: #e8ebed;
+  --primary: #0e0f11;
+  --primary-foreground: #ffffff;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #0e0f11;
+  --accent: #eef0f2;
+  --accent-foreground: #0e0f11;
+  --destructive: #e11d48;
+  --ring: #6366f1;
+  --radius: 0.5rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--yxt-bg);
+  color: var(--yxt-ink);
+  font-family: Inter, "PingFang SC", "Microsoft Yahei", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* scrollbars */
+.yxt-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.yxt-scroll::-webkit-scrollbar-thumb {
+  background: #d5d9dd;
+  border-radius: 8px;
+}
+
+/* resizable shell handle */
+[data-separator] {
+  flex: 0 0 4px !important;
+  transition: background 0.12s ease;
+}
+[data-separator]:hover,
+[data-separator][data-separator="active"] {
+  background: rgba(99, 102, 241, 0.25) !important;
+}
+
+/* xyflow inside workflow tab */
+.react-flow__attribution {
+  display: none;
+}
+
+.yxt-prose p {
+  margin: 0 0 0.75rem;
+  line-height: 1.65;
+}
+.yxt-prose p:last-child {
+  margin-bottom: 0;
+}
+.yxt-prose ol {
+  margin: 0.25rem 0 0.75rem 1.25rem;
+  padding: 0;
+  line-height: 1.65;
+}
+.yxt-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
 }
