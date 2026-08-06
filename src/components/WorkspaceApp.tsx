@@ -18,6 +18,7 @@ import type {
   NavKey,
   TaskCard,
   ToolStep,
+  Workflow,
 } from "@/lib/types";
 
 function loadState(): AppState {
@@ -41,6 +42,62 @@ function loadState(): AppState {
   }
 }
 
+/** Disk SSOT via API; localStorage remains cache only. */
+function persistWorkflow(workflow: Workflow) {
+  void fetch("/api/workspace/workflow", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow }),
+  }).catch(() => {});
+}
+
+/** Merge disk workflow into UI shape; keep stage tints from local when disk omits them. */
+function mergeWorkflowFromDisk(disk: Workflow, local: Workflow): Workflow {
+  const tintById = new Map(
+    local.stages.map((s) => [s.id, s.tint] as const),
+  );
+  return {
+    ...disk,
+    stages: disk.stages.map((s) => ({
+      ...s,
+      tint: s.tint ?? tintById.get(s.id),
+    })),
+    tasks: Array.isArray(disk.tasks) ? disk.tasks : local.tasks,
+  };
+}
+
+/** Map tool name → UI step kind (mirrors agent loop heuristics). */
+function toolStepKind(name: string): ToolStep["kind"] {
+  const n = name.toLowerCase();
+  if (n.startsWith("read") || n.includes("search") || n.includes("list")) {
+    return "read";
+  }
+  if (n.includes("skill") || n === "load_skill") return "skill";
+  if (
+    n.includes("workflow") ||
+    n.includes("handoff") ||
+    n.includes("inbox") ||
+    n.includes("memory")
+  ) {
+    return "mcp";
+  }
+  return "cli";
+}
+
+/** Multi when momo + collab keywords; otherwise auto (agent if LLM, else CLI). */
+function resolveRunMode(
+  agentId: string,
+  prompt: string,
+): "auto" | "multi" {
+  if (
+    agentId === "momo" &&
+    /协作|handoff|评审流水线/i.test(prompt)
+  ) {
+    return "multi";
+  }
+  return "auto";
+}
+
 export function WorkspaceApp() {
   const [ready, setReady] = useState(false);
   const [nav, setNav] = useState<NavKey>("chat");
@@ -51,8 +108,22 @@ export function WorkspaceApp() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setState(loadState());
+    const initial = loadState();
+    setState(initial);
     setReady(true);
+    // Disk SSOT: prefer workspace/.agent/workflow-state.json over seed/cache
+    void fetch("/api/workspace/workflow")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (d: { ok?: boolean; workflow?: Workflow } | null) => {
+          if (!d?.ok || !d.workflow) return;
+          setState((s) => ({
+            ...s,
+            workflow: mergeWorkflowFromDisk(d.workflow!, s.workflow),
+          }));
+        },
+      )
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -107,6 +178,18 @@ export function WorkspaceApp() {
 
   const onSend = useCallback(
     async (text: string) => {
+      // Prior messages only (new user turn goes in prompt, not history).
+      const priorHistory = (activeConv?.messages || [])
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+
+      const agentId = state.activeAgentId;
+      const conversationId = state.activeConvId;
+      const mode = resolveRunMode(agentId, text);
+
       const userMsg: ChatMessage = {
         id: `u-${Date.now()}`,
         role: "user",
@@ -144,8 +227,12 @@ export function WorkspaceApp() {
       const cliId = state.selectedCliId || "echo";
       const cliProfile = state.clis.find((c) => c.id === cliId);
       const steps: ToolStep[] = [];
+      /** callId → index in steps (for tool_end detail updates) */
+      const toolStepIndex = new Map<string, number>();
       let full = "";
       let aborted = false;
+
+      const bumpSteps = () => setLiveSteps([...steps]);
 
       try {
         const res = await fetch("/api/agent/run", {
@@ -154,6 +241,10 @@ export function WorkspaceApp() {
           signal: ac.signal,
           body: JSON.stringify({
             prompt: text,
+            mode,
+            agentId,
+            conversationId,
+            history: priorHistory,
             cliId,
             cli: cliProfile
               ? {
@@ -163,7 +254,9 @@ export function WorkspaceApp() {
                   args: cliProfile.args,
                 }
               : null,
-            cwd: `${process.env.NEXT_PUBLIC_WORKSPACE_CWD || ""}`.trim() || undefined,
+            cwd:
+              `${process.env.NEXT_PUBLIC_WORKSPACE_CWD || ""}`.trim() ||
+              undefined,
           }),
         });
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -187,8 +280,17 @@ export function WorkspaceApp() {
               detail?: string;
               text?: string;
               message?: string;
+              name?: string;
+              args?: unknown;
+              callId?: string;
+              result?: string;
+              finalText?: string;
+              exitCode?: number;
             };
+
             if (ev.type === "step") {
+              // Skip backend Tool: echoes — tool_start owns those steps.
+              if ((ev.label || "").startsWith("Tool:")) continue;
               const step: ToolStep = {
                 id: `s-${Date.now()}-${steps.length}`,
                 kind: (ev.kind as ToolStep["kind"]) || "log",
@@ -196,10 +298,64 @@ export function WorkspaceApp() {
                 detail: ev.detail,
               };
               steps.push(step);
-              setLiveSteps([...steps]);
+              bumpSteps();
+            } else if (ev.type === "tool_start") {
+              const name = ev.name || "tool";
+              const kind = toolStepKind(name);
+              const detail =
+                ev.args !== undefined
+                  ? typeof ev.args === "object"
+                    ? JSON.stringify(ev.args).slice(0, 200)
+                    : String(ev.args).slice(0, 200)
+                  : undefined;
+              const step: ToolStep = {
+                id: ev.callId ? `tool-${ev.callId}` : `s-${Date.now()}-${steps.length}`,
+                kind,
+                label: `Tool: ${name}`,
+                detail,
+              };
+              if (ev.callId) toolStepIndex.set(ev.callId, steps.length);
+              steps.push(step);
+              bumpSteps();
+            } else if (ev.type === "tool_end") {
+              const idx =
+                ev.callId !== undefined
+                  ? toolStepIndex.get(ev.callId)
+                  : undefined;
+              const resultPreview = (ev.result || "").slice(0, 400);
+              if (idx !== undefined && steps[idx]) {
+                const prev = steps[idx];
+                steps[idx] = {
+                  ...prev,
+                  detail: resultPreview
+                    ? `${prev.detail ? prev.detail + " → " : ""}${resultPreview}`
+                    : prev.detail,
+                };
+                bumpSteps();
+              } else if (ev.name) {
+                steps.push({
+                  id: `s-${Date.now()}-${steps.length}`,
+                  kind: toolStepKind(ev.name),
+                  label: `Tool done: ${ev.name}`,
+                  detail: resultPreview || undefined,
+                });
+                bumpSteps();
+              }
+            } else if (ev.type === "status") {
+              steps.push({
+                id: `s-${Date.now()}-${steps.length}`,
+                kind: "log",
+                label: ev.text || "status",
+              });
+              bumpSteps();
             } else if (ev.type === "token") {
               full += ev.text || "";
               setLiveText(full);
+            } else if (ev.type === "done") {
+              if (!full.trim() && ev.finalText) {
+                full = ev.finalText;
+                setLiveText(full);
+              }
             } else if (ev.type === "error") {
               full += `\n[error] ${ev.message}`;
               setLiveText(full);
@@ -210,7 +366,7 @@ export function WorkspaceApp() {
         const assistant: ChatMessage = {
           id: `a-${Date.now()}`,
           role: "assistant",
-          agentId: state.activeAgentId,
+          agentId,
           content: full.trim() || "（无输出）",
           steps,
           createdAt: new Date().toLocaleTimeString("zh-CN", {
@@ -226,14 +382,16 @@ export function WorkspaceApp() {
               : c,
           ),
         }));
-        pushActivity(`${cliId} · 完成一轮对话`);
+        pushActivity(
+          `${mode === "multi" ? "multi" : agentId} · ${cliId} · 完成一轮对话`,
+        );
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") {
           aborted = true;
           const assistant: ChatMessage = {
             id: `a-${Date.now()}`,
             role: "assistant",
-            agentId: state.activeAgentId,
+            agentId,
             content: (full.trim() ? `${full.trim()}\n\n` : "") + "（已停止）",
             steps,
             createdAt: new Date().toLocaleTimeString("zh-CN", {
@@ -254,8 +412,8 @@ export function WorkspaceApp() {
           const assistant: ChatMessage = {
             id: `a-${Date.now()}`,
             role: "assistant",
-            agentId: state.activeAgentId,
-            content: `本地 CLI 调用失败：${e instanceof Error ? e.message : String(e)}`,
+            agentId,
+            content: `Agent 调用失败：${e instanceof Error ? e.message : String(e)}`,
             steps,
             createdAt: new Date().toLocaleTimeString("zh-CN", {
               hour: "2-digit",
@@ -279,7 +437,14 @@ export function WorkspaceApp() {
         void aborted;
       }
     },
-    [pushActivity, state.activeAgentId, state.selectedCliId, state.clis],
+    [
+      pushActivity,
+      state.activeAgentId,
+      state.activeConvId,
+      state.selectedCliId,
+      state.clis,
+      activeConv,
+    ],
   );
 
   const onNewChat = () => {
@@ -313,10 +478,12 @@ export function WorkspaceApp() {
         assigneeId: s.activeAgentId,
         updatedAt: "刚刚",
       };
-      return {
-        ...s,
-        workflow: { ...s.workflow, tasks: [...s.workflow.tasks, task] },
+      const workflow = {
+        ...s.workflow,
+        tasks: [...s.workflow.tasks, task],
       };
+      persistWorkflow(workflow);
+      return { ...s, workflow };
     });
     pushActivity("新建任务");
   };
@@ -324,14 +491,16 @@ export function WorkspaceApp() {
   const onMoveTask = (taskId: string, stageId: string) => {
     setState((s) => {
       const stage = s.workflow.stages.find((x) => x.id === stageId);
+      const workflow = {
+        ...s.workflow,
+        tasks: s.workflow.tasks.map((t) =>
+          t.id === taskId ? { ...t, stageId, updatedAt: "刚刚" } : t,
+        ),
+      };
+      persistWorkflow(workflow);
       return {
         ...s,
-        workflow: {
-          ...s.workflow,
-          tasks: s.workflow.tasks.map((t) =>
-            t.id === taskId ? { ...t, stageId, updatedAt: "刚刚" } : t,
-          ),
-        },
+        workflow,
         activity: [
           {
             id: `act-${Date.now()}`,
@@ -345,15 +514,16 @@ export function WorkspaceApp() {
   };
 
   const onUpdateTask = (taskId: string, patch: Partial<TaskCard>) => {
-    setState((s) => ({
-      ...s,
-      workflow: {
+    setState((s) => {
+      const workflow = {
         ...s.workflow,
         tasks: s.workflow.tasks.map((t) =>
           t.id === taskId ? { ...t, ...patch, updatedAt: "刚刚" } : t,
         ),
-      },
-    }));
+      };
+      persistWorkflow(workflow);
+      return { ...s, workflow };
+    });
   };
 
   const onDeleteTask = (taskId: string) => {

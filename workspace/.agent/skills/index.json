@@ -1,0 +1,32 @@
+[
+  {
+    "id": "yxt-workflow",
+    "name": "yxt-workflow",
+    "description": "工作流编排与阶段推进、任务创建（PRD-Spec 九阶段）"
+  },
+  {
+    "id": "prd-review",
+    "name": "prd-review",
+    "description": "PRD 完整性与逻辑一致性独立评审"
+  },
+  {
+    "id": "prd-write",
+    "name": "prd-write",
+    "description": "PRD 起草与 BDD Use Case 编写"
+  },
+  {
+    "id": "deep-research-pro",
+    "name": "deep-research-pro",
+    "description": "多源调研：先搜 workspace 与记忆，再综合带引用"
+  },
+  {
+    "id": "humanizer",
+    "name": "humanizer",
+    "description": "去掉 AI 腔，改成自然中文产品文案"
+  },
+  {
+    "id": "lessons-from-runs",
+    "name": "lessons-from-runs",
+    "description": "Lessons harvested from failed agent runs (Ch8 offline evolution)"
+  }
+]

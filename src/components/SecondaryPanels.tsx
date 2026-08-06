@@ -16,6 +16,28 @@ import { WorkspaceFileTree } from "./workspace/FileTree";
 
 type FsFile = { path: string; name: string; kind: string; size: number };
 
+type DiskSkill = {
+  id: string;
+  name: string;
+  description: string;
+  preview?: string;
+};
+
+type TrajectoryListItem = {
+  id?: string;
+  agentId?: string;
+  success?: boolean;
+  endedAt?: string;
+  tools?: string[];
+};
+
+type TrajectorySummary = {
+  total?: number;
+  successRate?: number;
+  topTools?: string[];
+  failureCount?: number;
+};
+
 export function SecondaryPanels(props: {
   nav: NavKey;
   agents: AgentProfile[];
@@ -54,11 +76,28 @@ export function SecondaryPanels(props: {
   const [editAgentId, setEditAgentId] = useState<string | null>(null);
   const [cronForm, setCronForm] = useState({
     name: "",
-    schedule: "0 9 * * *",
+    schedule: "@daily",
     agentId: props.agents[0]?.id || "momo",
     prompt: "",
   });
   const [cliEdit, setCliEdit] = useState(props.clis);
+  const [diskSkills, setDiskSkills] = useState<DiskSkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillEnabled, setSkillEnabled] = useState<Record<string, boolean>>({});
+  const [diskCrons, setDiskCrons] = useState<CronJob[] | null>(null);
+  const [cronsLoading, setCronsLoading] = useState(false);
+  const [trajItems, setTrajItems] = useState<TrajectoryListItem[]>([]);
+  const [trajLoading, setTrajLoading] = useState(false);
+  const [trajError, setTrajError] = useState<string | null>(null);
+  const [trajSummary, setTrajSummary] = useState<TrajectorySummary | null>(
+    null,
+  );
+  const [harvestPath, setHarvestPath] = useState<string | null>(null);
+  const [harvestSkillId, setHarvestSkillId] = useState<string | null>(null);
+  const [harvestError, setHarvestError] = useState<string | null>(null);
+  const [harvestBusy, setHarvestBusy] = useState(false);
+  const [diskInbox, setDiskInbox] = useState<InboxItem[] | null>(null);
+  const [inboxLoading, setInboxLoading] = useState(false);
 
   useEffect(() => setCliEdit(props.clis), [props.clis]);
 
@@ -69,6 +108,150 @@ export function SecondaryPanels(props: {
       .then((d: { files?: FsFile[] }) => setFsFiles(d.files || []))
       .catch(() => setFsFiles([]));
   }, [props.nav]);
+
+  useEffect(() => {
+    if (props.nav !== "skills") return;
+    setSkillsLoading(true);
+    void fetch("/api/agent/skills?preview=1")
+      .then((r) => r.json())
+      .then((d: { skills?: DiskSkill[]; ok?: boolean }) => {
+        const list = Array.isArray(d.skills) ? d.skills : [];
+        setDiskSkills(list);
+        setSkillEnabled((prev) => {
+          const next = { ...prev };
+          for (const s of list) {
+            if (next[s.id] === undefined) next[s.id] = true;
+          }
+          return next;
+        });
+      })
+      .catch(() => setDiskSkills([]))
+      .finally(() => setSkillsLoading(false));
+  }, [props.nav]);
+
+  const refreshDiskCrons = () => {
+    setCronsLoading(true);
+    return fetch("/api/agent/crons")
+      .then((r) => r.json())
+      .then((d: { crons?: CronJob[]; ok?: boolean }) => {
+        setDiskCrons(Array.isArray(d.crons) ? d.crons : []);
+      })
+      .catch(() => setDiskCrons([]))
+      .finally(() => setCronsLoading(false));
+  };
+
+  useEffect(() => {
+    if (props.nav !== "automation") return;
+    void refreshDiskCrons();
+  }, [props.nav]);
+
+  const refreshDiskInbox = () => {
+    setInboxLoading(true);
+    return fetch("/api/agent/inbox")
+      .then((r) => r.json())
+      .then((d: { items?: InboxItem[]; inbox?: InboxItem[]; ok?: boolean }) => {
+        const list = Array.isArray(d.items)
+          ? d.items
+          : Array.isArray(d.inbox)
+            ? d.inbox
+            : [];
+        setDiskInbox(list);
+      })
+      .catch(() => setDiskInbox([]))
+      .finally(() => setInboxLoading(false));
+  };
+
+  useEffect(() => {
+    if (props.nav !== "inbox") return;
+    void refreshDiskInbox();
+  }, [props.nav]);
+
+  /** Disk SSOT first; seed items fill gaps by id. */
+  const displayInbox: InboxItem[] = (() => {
+    if (diskInbox === null) return props.inbox;
+    const seen = new Set(diskInbox.map((i) => i.id));
+    return [...diskInbox, ...props.inbox.filter((i) => !seen.has(i.id))];
+  })();
+
+  const markInboxDone = (id: string) => {
+    props.onInboxDone(id);
+    setDiskInbox((prev) =>
+      prev
+        ? prev.map((i) => (i.id === id ? { ...i, done: true } : i))
+        : prev,
+    );
+    void fetch("/api/agent/inbox", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, done: true }),
+    }).then(() => refreshDiskInbox());
+  };
+
+  const refreshTrajectories = () => {
+    setTrajLoading(true);
+    setTrajError(null);
+    return fetch("/api/agent/trajectories?limit=10")
+      .then((r) => r.json())
+      .then(
+        (d: {
+          ok?: boolean;
+          items?: TrajectoryListItem[];
+          summary?: TrajectorySummary | null;
+          error?: string;
+        }) => {
+          if (d.ok === false) {
+            setTrajError(d.error || "加载失败");
+            setTrajItems([]);
+            setTrajSummary(null);
+            return;
+          }
+          const list = Array.isArray(d.items) ? d.items : [];
+          setTrajItems(list.slice(0, 10));
+          const s = d.summary && typeof d.summary === "object" ? d.summary : null;
+          setTrajSummary(s);
+        },
+      )
+      .catch(() => {
+        setTrajError("网络错误");
+        setTrajItems([]);
+        setTrajSummary(null);
+      })
+      .finally(() => setTrajLoading(false));
+  };
+
+  const harvestSkill = () => {
+    setHarvestBusy(true);
+    setHarvestPath(null);
+    setHarvestSkillId(null);
+    setHarvestError(null);
+    return fetch("/api/agent/trajectories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "harvest" }),
+    })
+      .then((r) => r.json())
+      .then(
+        (d: {
+          ok?: boolean;
+          path?: string;
+          skillId?: string;
+          error?: string;
+        }) => {
+          if (d.ok === false || !d.path) {
+            setHarvestError(d.error || "沉淀失败");
+            return;
+          }
+          setHarvestPath(typeof d.path === "string" ? d.path : String(d.path));
+          setHarvestSkillId(
+            typeof d.skillId === "string" && d.skillId
+              ? d.skillId
+              : "lessons-from-runs",
+          );
+        },
+      )
+      .catch(() => setHarvestError("网络错误"))
+      .finally(() => setHarvestBusy(false));
+  };
 
   const openFile = async (path: string) => {
     const r = await fetch(`/api/workspace/files?path=${encodeURIComponent(path)}`);
@@ -315,35 +498,54 @@ export function SecondaryPanels(props: {
             </button>
           </div>
           <div className="space-y-2">
-            {props.skills
-              .filter((s) => (skillTab === "agent" ? s.scope === "agent" : s.scope === "team"))
-              .map((s) => (
+            {skillsLoading ? (
+              <div className="text-[13px] text-[var(--yxt-muted)]">加载磁盘技能…</div>
+            ) : null}
+            {!skillsLoading && diskSkills.length === 0 ? (
+              <div className="text-[13px] text-[var(--yxt-muted)]">
+                暂无技能（workspace/.agent/skills）
+              </div>
+            ) : null}
+            {diskSkills.map((s) => {
+              const enabled = skillEnabled[s.id] !== false;
+              return (
                 <div
                   key={s.id}
                   className="flex items-start justify-between rounded-xl border border-[var(--yxt-border-soft)] px-4 py-3"
                 >
-                  <div>
+                  <div className="min-w-0 flex-1 pr-3">
                     <div className="font-medium text-[14px]">{s.name}</div>
                     <div className="mt-1 text-[13px] text-[var(--yxt-muted)]">
                       {s.description}
                     </div>
+                    {s.preview ? (
+                      <pre className="mt-2 max-h-20 overflow-hidden whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-[var(--yxt-muted)] opacity-80">
+                        {s.preview}
+                      </pre>
+                    ) : null}
                     <div className="mt-1 text-[11px] text-[var(--yxt-muted)]">
-                      Agent · {props.agents.find((a) => a.id === s.agentId)?.name}
+                      磁盘 · {s.id}
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => props.onToggleSkill(s.id)}
-                    className={`rounded-full px-3 py-1 text-[12px] ${
-                      s.enabled
+                    onClick={() =>
+                      setSkillEnabled((prev) => ({
+                        ...prev,
+                        [s.id]: !enabled,
+                      }))
+                    }
+                    className={`shrink-0 rounded-full px-3 py-1 text-[12px] ${
+                      enabled
                         ? "bg-[var(--yxt-mint-soft)] text-emerald-800"
                         : "bg-[#f3f4f6] text-[var(--yxt-muted)]"
                     }`}
                   >
-                    {s.enabled ? "已启用" : "已关闭"}
+                    {enabled ? "已启用" : "已关闭"}
                   </button>
                 </div>
-              ))}
+              );
+            })}
           </div>
           <button
             type="button"
@@ -381,11 +583,15 @@ export function SecondaryPanels(props: {
           </div>
           {autoTab === "cron" ? (
             <>
-              {props.crons.length === 0 ? (
-                <div className="text-[14px] text-[var(--yxt-muted)]">暂无定时任务</div>
+              {cronsLoading && diskCrons === null ? (
+                <div className="text-[14px] text-[var(--yxt-muted)]">加载磁盘定时任务…</div>
+              ) : (diskCrons ?? props.crons).length === 0 ? (
+                <div className="text-[14px] text-[var(--yxt-muted)]">
+                  暂无定时任务（磁盘 SSOT：workspace/.agent/crons.json）
+                </div>
               ) : (
                 <ul className="space-y-2">
-                  {props.crons.map((c) => (
+                  {(diskCrons ?? props.crons).map((c) => (
                     <li
                       key={c.id}
                       className="flex items-center justify-between rounded-xl border border-[var(--yxt-border-soft)] px-4 py-3 text-[13px]"
@@ -393,20 +599,47 @@ export function SecondaryPanels(props: {
                       <div>
                         <div className="font-medium">{c.name}</div>
                         <div className="text-[var(--yxt-muted)]">
-                          {c.schedule} · {props.agents.find((a) => a.id === c.agentId)?.name}
+                          {c.schedule} ·{" "}
+                          {props.agents.find((a) => a.id === c.agentId)?.name ||
+                            c.agentId}
+                          {c.lastRun
+                            ? ` · 上次 ${new Date(c.lastRun).toLocaleString()}`
+                            : ""}
                         </div>
                       </div>
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => props.onToggleCron(c.id)}
+                          onClick={() => {
+                            void fetch("/api/agent/crons", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                id: c.id,
+                                enabled: !c.enabled,
+                              }),
+                            })
+                              .then(() => refreshDiskCrons())
+                              .then(() => props.onToggleCron(c.id));
+                          }}
                           className="rounded-lg bg-[#f3f4f6] px-2 py-1"
                         >
                           {c.enabled ? "启用中" : "已停用"}
                         </button>
                         <button
                           type="button"
-                          onClick={() => props.onDeleteCron(c.id)}
+                          onClick={() => {
+                            void fetch("/api/agent/crons", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                action: "remove",
+                                id: c.id,
+                              }),
+                            })
+                              .then(() => refreshDiskCrons())
+                              .then(() => props.onDeleteCron(c.id));
+                          }}
                           className="text-rose-600"
                         >
                           删除
@@ -426,7 +659,7 @@ export function SecondaryPanels(props: {
                 />
                 <input
                   className="w-full rounded-lg border border-[var(--yxt-border-soft)] px-3 py-2 text-[13px]"
-                  placeholder="cron 表达式"
+                  placeholder="@hourly / @daily / every_minutes:N"
                   value={cronForm.schedule}
                   onChange={(e) => setCronForm({ ...cronForm, schedule: e.target.value })}
                 />
@@ -455,16 +688,23 @@ export function SecondaryPanels(props: {
                   className="rounded-lg bg-[var(--yxt-ink)] px-3 py-2 text-[13px] text-white"
                   onClick={() => {
                     if (!cronForm.name.trim()) return;
-                    props.onAddCron({
+                    const job = {
                       name: cronForm.name,
-                      schedule: cronForm.schedule,
+                      schedule: cronForm.schedule || "@daily",
                       agentId: cronForm.agentId,
                       prompt: cronForm.prompt,
                       enabled: true,
-                    });
+                    };
+                    void fetch("/api/agent/crons", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(job),
+                    })
+                      .then(() => refreshDiskCrons())
+                      .then(() => props.onAddCron(job));
                     setCronForm({
                       name: "",
-                      schedule: "0 9 * * *",
+                      schedule: "@daily",
                       agentId: props.agents[0]?.id || "momo",
                       prompt: "",
                     });
@@ -593,10 +833,13 @@ export function SecondaryPanels(props: {
 
       {props.nav === "inbox" ? (
         <div className="max-w-2xl space-y-3">
-          {props.inbox.filter((i) => !i.done).length === 0 ? (
+          {inboxLoading ? (
+            <div className="text-[13px] text-[var(--yxt-muted)]">加载收件箱…</div>
+          ) : null}
+          {displayInbox.filter((i) => !i.done).length === 0 && !inboxLoading ? (
             <div className="text-[14px] text-[var(--yxt-muted)]">暂无待办</div>
           ) : null}
-          {props.inbox.map((i) => (
+          {displayInbox.map((i) => (
             <div
               key={i.id}
               className={`rounded-xl border border-[var(--yxt-border-soft)] p-4 ${
@@ -612,7 +855,7 @@ export function SecondaryPanels(props: {
                 <button
                   type="button"
                   className="mt-2 text-[13px] text-indigo-600"
-                  onClick={() => props.onInboxDone(i.id)}
+                  onClick={() => markInboxDone(i.id)}
                 >
                   标为已处理
                 </button>
@@ -674,6 +917,136 @@ export function SecondaryPanels(props: {
           >
             保存 CLI 配置
           </button>
+
+          <div className="mt-2 space-y-3 rounded-xl border border-[var(--yxt-border-soft)] p-4">
+            <div className="font-medium text-[14px]">运行轨迹（Ch8）</div>
+            <p className="text-[12px] text-[var(--yxt-muted)]">
+              查看最近 Agent 运行记录，或将失败经验沉淀为 skill。
+            </p>
+            {trajSummary &&
+            typeof trajSummary.successRate === "number" &&
+            Number.isFinite(trajSummary.successRate) ? (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg bg-[#f5f6f7] px-3 py-2 text-[12px]">
+                <span>
+                  成功率{" "}
+                  <span className="font-medium text-[var(--yxt-ink)]">
+                    {(trajSummary.successRate * 100).toFixed(1)}%
+                  </span>
+                </span>
+                {typeof trajSummary.total === "number" ? (
+                  <span className="text-[var(--yxt-muted)]">
+                    共 {trajSummary.total} 条
+                  </span>
+                ) : null}
+                {typeof trajSummary.failureCount === "number" ? (
+                  <span className="text-[var(--yxt-muted)]">
+                    失败 {trajSummary.failureCount}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--yxt-border-soft)] px-3 py-1.5 text-[13px]"
+                disabled={trajLoading}
+                onClick={() => void refreshTrajectories()}
+              >
+                {trajLoading ? "加载中…" : "刷新轨迹"}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-[var(--yxt-ink)] px-3 py-1.5 text-[13px] text-white disabled:opacity-60"
+                disabled={harvestBusy}
+                onClick={() => void harvestSkill()}
+              >
+                {harvestBusy ? "沉淀中…" : "沉淀经验 skill"}
+              </button>
+            </div>
+            {trajError ? (
+              <div className="text-[12px] text-rose-600">{trajError}</div>
+            ) : null}
+            {harvestError ? (
+              <div className="text-[12px] text-rose-600">{harvestError}</div>
+            ) : null}
+            {harvestPath ? (
+              <div className="space-y-1.5 rounded-lg border border-[var(--yxt-border-soft)] bg-[#f5f6f7] px-3 py-2.5">
+                <div className="text-[11px] font-medium text-[var(--yxt-muted)]">
+                  沉淀路径
+                </div>
+                <div
+                  className="break-all font-mono text-[12px] text-[var(--yxt-ink)]"
+                  title={harvestPath}
+                >
+                  {harvestPath}
+                </div>
+                {harvestSkillId ? (
+                  <div className="pt-0.5 text-[12px]">
+                    <span className="text-[var(--yxt-muted)]">lessons skill · </span>
+                    <span
+                      className="cursor-default font-mono text-indigo-600 underline decoration-indigo-300 underline-offset-2"
+                      title={`.agent/skills/${harvestSkillId}.md`}
+                    >
+                      {harvestSkillId}
+                    </span>
+                    <span className="ml-1 text-[11px] text-[var(--yxt-muted)]">
+                      (.agent/skills/{harvestSkillId}.md)
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {trajItems.length === 0 && !trajLoading && !trajError ? (
+              <div className="text-[13px] text-[var(--yxt-muted)]">
+                暂无轨迹，点「刷新轨迹」加载
+              </div>
+            ) : null}
+            {trajItems.length > 0 ? (
+              <ul className="space-y-2">
+                {trajItems.map((t, i) => {
+                  const row =
+                    t && typeof t === "object"
+                      ? t
+                      : ({} as TrajectoryListItem);
+                  const tools = Array.isArray(row.tools) ? row.tools : [];
+                  const ok = row.success === true;
+                  const fail = row.success === false;
+                  return (
+                    <li
+                      key={
+                        typeof row.id === "string" && row.id
+                          ? row.id
+                          : `traj-${i}`
+                      }
+                      className="flex items-center justify-between rounded-xl border border-[var(--yxt-border-soft)] px-3 py-2 text-[12px]"
+                    >
+                      <div className="min-w-0 flex-1 pr-2">
+                        <div className="truncate font-mono text-[11px]">
+                          {typeof row.id === "string" && row.id ? row.id : "—"}
+                        </div>
+                        <div className="mt-0.5 text-[var(--yxt-muted)]">
+                          {(typeof row.agentId === "string" && row.agentId) ||
+                            "—"}{" "}
+                          · tools {tools.length}
+                        </div>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+                          ok
+                            ? "bg-[var(--yxt-mint-soft)] text-emerald-800"
+                            : fail
+                              ? "bg-rose-50 text-rose-700"
+                              : "bg-[#f3f4f6] text-[var(--yxt-muted)]"
+                        }`}
+                      >
+                        {ok ? "成功" : fail ? "失败" : "未知"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

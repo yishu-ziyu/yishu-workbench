@@ -43,6 +43,19 @@ next-env.d.ts
 # local agent / graph / verify junk
 .codegraph/
 .verify-tmp-*.mjs
+.verify-*.mjs
+.tmp-*.sh
+scripts/.run-*.sh
+scripts/.smoke-*.txt
 lark-im-resources/
 playwright-report/
 test-results/
+
+# agent runtime artifacts (regenerated locally)
+workspace/.agent/trajectories/
+workspace/.agent/handoffs/
+workspace/.agent/inbox.json
+workspace/.agent/memory/
+workspace/.agent/workflow-state.json
+workspace/.agent/crons.json
+workspace/.agent/cron-log.jsonl

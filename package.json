@@ -8,7 +8,19 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:deepen": "node scripts/verify-deepen.mjs"
+    "test:deepen": "node scripts/verify-deepen.mjs",
+    "test:agent": "node scripts/verify-agent.mjs",
+    "smoke:agent": "node scripts/smoke-agent-live.mjs",
+    "smoke:prd": "node scripts/smoke-prd-business.mjs",
+    "smoke:create-task": "node scripts/smoke-create-task.mjs",
+    "smoke:review": "node scripts/smoke-prd-review-loop.mjs",
+    "smoke:handoff": "node scripts/smoke-multi-handoff.mjs",
+    "smoke:all": "pnpm smoke:agent && pnpm smoke:prd && pnpm smoke:handoff",
+    "smoke:pipeline": "node scripts/smoke-pipeline-prd.mjs",
+    "smoke:ai-review": "node scripts/smoke-ai-review-stage.mjs",
+    "smoke:delivery": "node scripts/smoke-delivery.mjs",
+    "cron:tick": "node scripts/cron-tick-loop.mjs",
+    "test": "node scripts/verify-deepen.mjs && node scripts/verify-agent.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -33,6 +45,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
+    "jiti": "^2.7.0",
     "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "typescript": "^5"

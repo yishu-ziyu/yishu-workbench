@@ -145,9 +145,19 @@ ok("chat sources wire send stop cli selector thread-list", () => {
   assert.ok(composer.includes('data-yxt-role="composer-send"'));
   assert.ok(composer.includes('data-yxt-role="composer-stop"'));
   assert.ok(composer.includes('data-yxt-role="cli-selector"'));
-  assert.ok(composer.includes("本地 CLI"));
+  assert.ok(composer.includes("本地 CLI") || composer.includes("Agent"));
   assert.ok(thread.includes("onStop") && thread.includes("Composer"));
   assert.ok(sidebar.includes('data-yxt-role="thread-list"'));
+  assert.ok(app.includes("agentId") && app.includes("history"), "UI sends agent context");
+  assert.ok(
+    fs.existsSync(path.join(root, "src/lib/agent/loop.ts")),
+    "agent runtime loop exists",
+  );
+  const runRoute = fs.readFileSync(
+    path.join(root, "src/app/api/agent/run/route.ts"),
+    "utf8",
+  );
+  assert.ok(runRoute.includes("runAgentLoop"), "API uses agent runtime");
   assert.ok(app.includes("onStop") && app.includes("onSend"));
   assert.ok(app.includes("selectedCliId"));
 });

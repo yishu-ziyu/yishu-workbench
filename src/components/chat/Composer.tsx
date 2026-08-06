@@ -98,7 +98,7 @@ export function Composer(props: {
               value={props.selectedCliId}
               onChange={(e) => props.onSelectCli(e.target.value)}
               className="rounded-lg border border-[var(--yxt-border-soft)] bg-[#f7f8f9] px-2 py-1 text-xs"
-              title="本地 CLI Agent（相对 Moxt 的唯一差异）"
+              title="Agent 自动路由；无 LLM 时回退本地 CLI"
               data-yxt-role="cli-selector"
             >
               {props.clis.map((c) => (
@@ -108,7 +108,7 @@ export function Composer(props: {
                 </option>
               ))}
             </select>
-            <span className="text-[11px] text-[var(--yxt-muted)]">本地 CLI</span>
+            <span className="text-[11px] text-[var(--yxt-muted)]">Agent / CLI</span>
           </div>
           <div className="flex items-center gap-2">
             <button
